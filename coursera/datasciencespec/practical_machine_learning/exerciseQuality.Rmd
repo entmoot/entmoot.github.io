@@ -1,0 +1,201 @@
+---
+title: "Classifying exercise execution quality from motion tracking data"
+output: html_document
+date: August 2014
+---
+
+### Summary
+In this report we find good classification models for exercise execution quality from motion tracking data. The data for this study is obtained from [here](http://groupware.les.inf.puc-rio.br/har), used in [1]. From the data exploration we found that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics. Using insight that test-set presents data about identical individuals as in the training set, we tried out kNN algorithm that should use specific user's anthropometric characteristics. SVM model, well known good performing robust classifier, has even more impressive performance on this dataset and it seems to also extract user specifics. Finally, streching the data even more, to the extremes, after seeing specifics of the relation between the test and training set, we constructed a trivial classifier that should have the best performance on the given test set with this training data.  
+
+### Data processing and exploration
+```{r loading data}
+library(knitr)
+opts_chunk$set(cache=T)
+options(scipen=1,digits=7)
+mov1=read.csv("pml-training.csv")
+mov2=read.csv("pml-testing.csv")
+
+names(mov1)
+```
+The supplied labeled dataset has `r nrow(mov1)` observations and `r ncol(mov1)` variables. But, most of the observations miss summary statistics data. As all the observation in the test set also do not have this information we remove those columns from the dataset. We also remove the columns holding the observationID, time related markers/variables, and *num_window* as these hold the time information which should not be relevant if we would like to do exercises in the future and classify our execution quality.
+
+```{r filtering variables}
+cols=grep("max|min|amplitude|kurtosis|avg|var|stddev|skewness",names(mov1))
+mov1.filtered=mov1[,-c(cols,1,3,4,5,6,7)]
+```
+Now, we split the data into the training set and labeled test set. The latter we will use to estimate out-of-sample accuracy.
+```{r loading libs and utils,echo=F}
+library(caret)
+library(doParallel)
+library(kernlab)
+
+accuracy=function(preds,actuals)
+  {
+  sum(preds==actuals)/length(actuals)
+  }
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+```{r partitioning}
+set.seed(12)
+inTrain=createDataPartition(y=mov1.filtered$classe,p=0.7,list=F)
+
+trainMov=mov1.filtered[inTrain,]
+testMov=mov1.filtered[-inTrain,]
+```
+From now on we use only the training set, until specified otherwise.
+
+We shall check several boxplots to see how do the values look for specific user and exercise quality class. 
+```{r boxes,fig.width=9,fig.height=9}
+par(mfrow=c(2,2))
+with(mov1[inTrain,],boxplot(roll_belt~classe+user_name, main="Fig 1a. Belt roll vs user-class"
+                            ,xlab="Class and user",ylab="Belt roll"))
+
+with(mov1[inTrain,],boxplot(yaw_dumbbell~classe+user_name, main="Fig 1b. Dumbell yaw vs user-class"
+                            ,xlab="Class and user",ylab="Dumbell yaw"))
+
+with(mov1[inTrain,],boxplot(pitch_arm~classe+user_name, main="Fig 1c. Arm pitch vs user-class"
+                            ,xlab="Class and user",ylab="Arm pitch"))
+with(mov1[inTrain,],boxplot(total_accel_forearm~classe+user_name, main="Fig 1d. Forearm acceleration vs user-class"
+                            ,xlab="Class and user",ylab="Forearm acceleration"))
+par(mfrow=c(1,1))
+```
+We can see that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics.
+
+Let's see if there is the relationship between observation order and classe in the training set.
+```{r relationship}
+plot(mov1[inTrain,]$X,mov1[inTrain,]$classe,main="Fig 2. Ordering of classes in training set",xlab="Obervation order number",
+     ylab="Exercise quality class",yaxt='n')
+axis(side=2, at=1:5, labels=levels(mov1$classe))
+```
+
+### kNN model
+Looking into unlabeled test set we can see that all the records describe the identical set of individuals as the training set so we can learn using the user anthropometric specifics. kNN seems as good candidate for using these specifics. Prior to that, we normalize the data, removing irrelevant *user_name*. Also, as we will use the cross-validation, we shuffle the rows in training set to break possible bias in folds (Fig 2.).
+```{r normalization and shuffling}
+N=length(names(mov1.filtered))
+predObj=preProcess(trainMov[,-c(1,N)],method=c("center","scale"));
+
+trainMov.stand=predict(predObj,trainMov[,-c(1,N)])
+testMov.stand=predict(predObj,testMov[,-c(1,N)])
+
+set.seed(222)
+shuffle1=sample(nrow(trainMov.stand))
+```
+We use the cross-validation to select the value of parameter k from the set of {1,3,5,7,9}.
+```{r kNN model}
+ctrl <- trainControl(method = "cv", number=5)
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+mod.knn=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method="knn",trControl=ctrl,tuneGrid = expand.grid(.k=c(1,3,5,7,9)))
+stopCluster(cl)
+mod.knn
+```
+The best model has **k=`r mod.knn$bestTune`** and *estimated accuracy=`r round(mod.knn$results[which(mod.knn$bestTune %in%c(1,3,5,7,9)),2],digits=6)`*.
+
+### SVM model
+SVM is known for it's great out-of-box performance in classification, so we create model to see if it can top kNN model. Using crossvalidation we choose the *C* and *sigma* parameters and due to high computational demands we use paralelization and rather small tuning grid.
+```{r SVM model}
+ctrl <- trainControl(method = "cv", number=5)
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+mod.svm=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method="svmRadial",trControl=ctrl,tuneGrid = expand.grid(.sigma=c(0.01,0.02),.C=c(1,100,200)))
+stopCluster(cl)
+mod.svm
+```
+The selected model has **C=`r mod.svm$bestTune$C`**, **sigma=`r mod.svm$bestTune$sigma`** and *estimated accuracy=`r round(mod.svm$results[mod.svm$results$sigma==mod.svm$bestTune$sigma & mod.svm$results$C==mod.svm$bestTune$C,]$Accuracy,digits=6)`*.
+
+### Trivial model
+Let's look at the **num_window vs classe** plot:
+
+```{r trivial plot}
+with(mov1[inTrain,],plot(num_window,classe, yaxt='n',ylab="Exercise quality class",xlab="Activity window number", main="Window number vs exercise quality class"))
+axis(side=2, at=1:5, labels=levels(mov1$classe))
+```
+
+To clarify the plot, let's be more precise and answer the question are all observations sharing same value of **num_window** also belonging to the same **classe**?
+```{r logic}
+## Are all cases in num_window belonging to the same classe?
+all(sapply(unique(mov1$num_window), function(x)  length(unique(mov1[mov1$num_window==x,]$classe))==1))
+```
+*So, in our trivial model, we simply look at the current test case and find the classe of observations from the training set that belong to the same num_window.* In the case that there is no such set of observations in the training set, by arbitrary choice return the default class, the class of the first observation in training set.
+```{r trivial model}
+predder=function(window,train)
+  {
+  if (length(train[train$num_window==window,]$classe)>0){
+    train[train$num_window==window,]$classe[1] 
+    }
+  else 
+    {
+      train$classe[1]
+      }
+  }
+predd=function(newset,train)
+  {
+  res=sapply(newset$num_window,function(x){predder(x,train)})
+  res
+  }
+```
+```{r calcs}
+mov1.filtered2Tr=mov1[inTrain,-c(cols,1,3,4,5,6)] ## retain num_window
+# speedup by pre-filtering
+#filt1=mov1.filtered2Tr[!duplicated(mov1.filtered2Tr[,c("num_window")]),]
+
+sum=0
+for(i in 0:9){
+  begin=as.integer(nrow(mov1.filtered2Tr)/10)*i+min(i,nrow(mov1.filtered2Tr)%%10)+1
+  end=begin+as.integer(nrow(mov1.filtered2Tr)/10)+as.integer(i<(nrow(mov1.filtered2Tr)%%10))-1
+  sprintf('begin %f',begin)
+  sprintf('end %f',end)
+  #mov1.filtered2Ts=mov1[-inTrain,-c(cols,1,3,4,5,6)] ## retain num_window
+  #to speed up the model
+  temp=mov1.filtered2Tr[-(shuffle1[begin:end]),]
+  filt1=temp[!duplicated(temp[,c("num_window")]),]
+  
+  sum=sum+accuracy(predd(mov1.filtered2Tr[shuffle1[begin:end],],filt1),mov1.filtered2Tr[shuffle1[begin:end],]$classe)
+  }
+sprintf('Estimated accuracy: %f',sum/10)
+```
+We can see that the estimated out-of-sample accuracy for trivial model **over the partitions in training set** is not perfect 1, and that is because in some partitionings, all observations for some *num_window* can be outside of training set. However, this is not the case for the unlabeled test set:
+
+```{r check test set}
+## Are there observation in the training set for each num_window in unlabeled test set?
+all(mov2$num_window %in% mov1$num_window)
+```
+So, we expect that the accuracy on unlabeled test set to be 1. Of course, this model **works well EXCLUSIVELY on the given data. its performance on data with new, yet unobserved, num_windows will be very bad as it just returns default class regardless of any other information.**
+
+### Other models
+We also tried out random forest and multinomial logistic regression. The former takes quite longer to compute and does not improve on other models while at the same time also building its precision on user specifics, so we do not gain anything. The latter model is substantially weaker classifier than others.
+
+### Final choice
+Due to very good performance, we choose SVM model. This model is expected to be very good classifier for **existing set of users** even in future. On the other hand, the trivial classifier is very probably to achieve the best results on the unlabelled test set, but it does not generalize to any new measurements.
+
+We use the previously kept-out labelled test set to estimate the expected out-of-sample accuracy of the selected SVM model and we get the estimate **`r round(accuracy(predict(mod.svm,newdata=testMov.stand),testMov$classe),digits=6)`**.
+
+```{r selected model,echo=FALSE}
+mov2.filtered=mov2[,-c(cols,1,3,4,5,6,7)]
+
+predObj=preProcess(mov1.filtered[,-c(1,N)],method=c("center","scale"));
+mov1.fstand=predict(predObj,newdata=mov1.filtered[,-c(1,N)])
+mov2.fstand=predict(predObj,newdata=mov2.filtered[,-c(1,N)])
+
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+mod.svm2=train(mov1.filtered$classe~.,data=mov1.fstand,method="svmRadial",tuneGrid = expand.grid(.sigma=0.02,.C=200))
+stopCluster(cl)
+```
+```{r saving tests,echo=FALSE}
+preds=predict(mod.svm2,newdata=mov2.fstand)
+pml_write_files(preds)
+```
+### Conclusion
+We intended to make a good classifier for exercise execution quality. After trying out several models, we chose SVM model based on crossvalidation estimated accuracy. We used obtained estimate of out-of-sample accuracy of **`r round(accuracy(predict(mod.svm,newdata=testMov.stand),testMov$classe),digits=6)`** using the labelled test set which signifies that the selected model will be very good classifier in the future for the users from the dataset, or the people of similar anthropometric characteristics. The accuracy will undoubtably be smaller for people that are not like the measured users.
+
+## References
+1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
