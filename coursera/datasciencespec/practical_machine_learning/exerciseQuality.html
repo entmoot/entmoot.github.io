@@ -59,7 +59,7 @@ if (window.hljs && document.readyState && document.readyState === "complete") {
 
 <div id="summary" class="section level3">
 <h3>Summary</h3>
-<p>In this report we find good classification models for exercise execution quality from motion tracking data. The data for this study is obtained from <a href="http://groupware.les.inf.puc-rio.br/har">here</a>, used in [1]. From the data exploration we found that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics. Using insight that test-set presents data about identical individuals as in the training set, we tried out kNN algorithm that should use specific user’s anthropometric characteristics. SVM model, well known good performing robust classifier, has even more impressive performance on this dataset and it seems to also extract user specifics. Finally, streching the data even more, to the extremes, after seeing specifics of the relation between the test and training set, we constructed a trivial classifier that should have the best performance on the given test set with this training data.</p>
+<p>In this report we find good classification models for exercise execution quality from motion tracking data. The data for this study is obtained from <a href="http://groupware.les.inf.puc-rio.br/har">here</a>, used in [1]. From the data exploration we found that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics. Using insight that test-set presents data about identical individuals as in the training set, we tried out kNN algorithm that should use specific users’ anthropometric characteristics. SVM model, well known good performing robust classifier, has even more impressive performance on this dataset and it seems to also extract user specifics so it should work well on new data from those users. Finally, streching the data even more, to the extremes, after seeing specifics of the relation between the test and training set, we constructed a trivial classifier that should have the best performance on the given test set with this training data.</p>
 </div>
 <div id="data-processing-and-exploration" class="section level3">
 <h3>Data processing and exploration</h3>
@@ -150,7 +150,7 @@ names(mov1)</code></pre>
 ## [155] &quot;accel_forearm_y&quot;          &quot;accel_forearm_z&quot;         
 ## [157] &quot;magnet_forearm_x&quot;         &quot;magnet_forearm_y&quot;        
 ## [159] &quot;magnet_forearm_z&quot;         &quot;classe&quot;</code></pre>
-<p>The supplied labeled dataset has 19622 observations and 160 variables. But, most of the observations miss summary statistics data. As all the observation in the test set also do not have this information we remove those columns from the dataset. We also remove the columns holding the observationID, time related markers/variables, and <em>num_window</em> as these hold the time information which should not be relevant if we would like to do exercises in the future and classify our execution quality.</p>
+<p>The supplied labeled dataset has 19622 observations and 160 variables. But, the most of the observations miss summary statistics data. As all the observations in the test set also do not have this information we remove those columns from the dataset. We also remove the columns holding the observationID, time related markers/variables, and <em>num_window</em> as these hold the time information which should not be relevant if we would like to do exercises in the future and classify our execution quality.</p>
 <pre class="r"><code>cols=grep(&quot;max|min|amplitude|kurtosis|avg|var|stddev|skewness&quot;,names(mov1))
 mov1.filtered=mov1[,-c(cols,1,3,4,5,6,7)]</code></pre>
 <p>Now, we split the data into the training set and labeled test set. The latter we will use to estimate out-of-sample accuracy.</p>
@@ -183,45 +183,41 @@ axis(side=2, at=1:5, labels=levels(mov1$classe))</code></pre>
 </div>
 <div id="knn-model" class="section level3">
 <h3>kNN model</h3>
-<p>Looking into unlabeled test set we can see that all the records describe the identical set of individuals as the training set so we can learn using the user anthropometric specifics. kNN seems as good candidate for using these specifics. Prior to that, we normalize the data, removing irrelevant <em>user_name</em>. Also, as we will use the cross-validation, we shuffle the rows in training set to break possible bias in folds (Fig 2.).</p>
+<p>Looking into unlabeled test set we can see that all the records describe the identical set of individuals as the training set so we can learn using the user anthropometric specifics. kNN seems as good candidate for using these specifics. As we will use the cross-validation, we shuffle the rows in training set to break possible bias in folds (Fig 2.).</p>
 <pre class="r"><code>N=length(names(mov1.filtered))
-predObj=preProcess(trainMov[,-c(1,N)],method=c(&quot;center&quot;,&quot;scale&quot;));
-
-trainMov.stand=predict(predObj,trainMov[,-c(1,N)])
-testMov.stand=predict(predObj,testMov[,-c(1,N)])
 
 set.seed(222)
-shuffle1=sample(nrow(trainMov.stand))</code></pre>
+shuffle1=sample(nrow(trainMov))</code></pre>
 <p>We use the cross-validation to select the value of parameter k from the set of {1,3,5,7,9}.</p>
 <pre class="r"><code>ctrl &lt;- trainControl(method = &quot;cv&quot;, number=5)
 cl &lt;- makeCluster(detectCores())
 registerDoParallel(cl)
-mod.knn=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method=&quot;knn&quot;,trControl=ctrl,tuneGrid = expand.grid(.k=c(1,3,5,7,9)))
+mod.knn=train(trainMov$classe[shuffle1]~.,data=trainMov[shuffle1,],method=&quot;knn&quot;,preProcess=c(&quot;center&quot;,&quot;scale&quot;),trControl=ctrl,tuneGrid = expand.grid(.k=c(1,3,5,7,9)))
 stopCluster(cl)
 mod.knn</code></pre>
 <pre><code>## k-Nearest Neighbors 
 ## 
 ## 13737 samples
-##    51 predictors
+##    53 predictors
 ##     5 classes: 'A', 'B', 'C', 'D', 'E' 
 ## 
-## No pre-processing
+## Pre-processing: centered, scaled 
 ## Resampling: Cross-Validated (5 fold) 
 ## 
-## Summary of sample sizes: 10989, 10989, 10990, 10990, 10990 
+## Summary of sample sizes: 10989, 10990, 10991, 10990, 10988 
 ## 
 ## Resampling results across tuning parameters:
 ## 
 ##   k  Accuracy  Kappa  Accuracy SD  Kappa SD
-##   1  0.985     0.982  0.003668     0.004641
-##   3  0.972     0.964  0.003116     0.003946
-##   5  0.957     0.945  0.000758     0.000974
-##   7  0.942     0.927  0.001998     0.002541
-##   9  0.929     0.910  0.002089     0.002663
+##   1  0.985     0.981  0.00260      0.00328 
+##   3  0.970     0.962  0.00264      0.00333 
+##   5  0.956     0.944  0.00280      0.00354 
+##   7  0.943     0.928  0.00525      0.00666 
+##   9  0.932     0.914  0.00598      0.00759 
 ## 
 ## Accuracy was used to select the optimal model using  the largest value.
 ## The final value used for the model was k = 1.</code></pre>
-<p>The best model has <strong>k=1</strong> and <em>estimated accuracy=0.98544</em>.</p>
+<p>The best model has <strong>k=1</strong> and <em>estimated accuracy=0.984858</em>.</p>
 </div>
 <div id="svm-model" class="section level3">
 <h3>SVM model</h3>
@@ -229,33 +225,48 @@ mod.knn</code></pre>
 <pre class="r"><code>ctrl &lt;- trainControl(method = &quot;cv&quot;, number=5)
 cl &lt;- makeCluster(detectCores())
 registerDoParallel(cl)
-mod.svm=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method=&quot;svmRadial&quot;,trControl=ctrl,tuneGrid = expand.grid(.sigma=c(0.01,0.02),.C=c(1,100,200)))
+mod.svm=train(trainMov$classe[shuffle1]~.,data=trainMov[shuffle1,],method=&quot;svmRadial&quot;,preProcess=c(&quot;center&quot;,&quot;scale&quot;),trControl=ctrl,tuneGrid = expand.grid(.sigma=c(0.01,0.02),.C=c(1,100,200)))
 stopCluster(cl)
 mod.svm</code></pre>
 <pre><code>## Support Vector Machines with Radial Basis Function Kernel 
 ## 
 ## 13737 samples
-##    51 predictors
+##    53 predictors
 ##     5 classes: 'A', 'B', 'C', 'D', 'E' 
 ## 
-## No pre-processing
+## Pre-processing: centered, scaled 
 ## Resampling: Cross-Validated (5 fold) 
 ## 
-## Summary of sample sizes: 10990, 10990, 10989, 10989, 10990 
+## Summary of sample sizes: 10990, 10990, 10989, 10990, 10989 
 ## 
 ## Resampling results across tuning parameters:
 ## 
 ##   sigma  C    Accuracy  Kappa  Accuracy SD  Kappa SD
-##   0.01     1  0.911     0.887  0.005837     0.007433
-##   0.01   100  0.990     0.988  0.001234     0.001561
-##   0.01   200  0.992     0.989  0.000681     0.000862
-##   0.02     1  0.944     0.929  0.007643     0.009707
-##   0.02   100  0.993     0.991  0.001060     0.001341
-##   0.02   200  0.993     0.991  0.001423     0.001800
+##   0.01     1  0.910     0.886  0.008316     0.01059 
+##   0.01   100  0.990     0.987  0.001897     0.00240 
+##   0.01   200  0.992     0.990  0.001491     0.00189 
+##   0.02     1  0.943     0.928  0.006103     0.00776 
+##   0.02   100  0.993     0.991  0.000941     0.00119 
+##   0.02   200  0.992     0.990  0.001297     0.00164 
 ## 
 ## Accuracy was used to select the optimal model using  the largest value.
-## The final values used for the model were sigma = 0.02 and C = 200.</code></pre>
-<p>The selected model has <strong>C=200</strong>, <strong>sigma=0.02</strong> and <em>estimated accuracy=0.992939</em>.</p>
+## The final values used for the model were sigma = 0.02 and C = 100.</code></pre>
+<p>The selected model has <strong>C=100</strong>, <strong>sigma=0.02</strong> and <em>estimated accuracy=0.992648</em>.</p>
+<p>In order to find if SVM model bases its performance on user specifics, we used 5-fold crossvalidation, where in each fold all the data for one user are in the test set, while all other are inside the training set.</p>
+<pre class="r"><code>ctrl=trainControl(method=&quot;none&quot;)
+sum=0
+for(i in levels(trainMov$user_name)){
+
+  temp=trainMov[trainMov$user_name!=i,]
+  temp_test=trainMov[trainMov$user_name==i,]
+  
+  mod.svm_t=train(temp$classe~.,data=temp[,-c(1,N)],method=&quot;svmRadial&quot;,preProcess=c(&quot;center&quot;,&quot;scale&quot;),trControl=ctrl,tuneGrid = expand.grid(.sigma=mod.svm$bestTune$sigma,.C=mod.svm$bestTune$C))
+  
+  sum=sum+accuracy(predict(mod.svm_t, newdata=temp_test[,-c(1,N)]),temp_test$classe)
+  }
+sprintf('Estimated accuracy: %f',sum/5)</code></pre>
+<pre><code>## [1] &quot;Estimated accuracy: 0.363832&quot;</code></pre>
+<p>The estimated accuracy is much lower in this case which means that our SVM model bases its good performance on user specifics, just like kNN model.</p>
 </div>
 <div id="trivial-model" class="section level3">
 <h3>Trivial model</h3>
@@ -314,12 +325,12 @@ all(mov2$num_window %in% mov1$num_window)</code></pre>
 </div>
 <div id="final-choice" class="section level3">
 <h3>Final choice</h3>
-<p>Due to very good performance, we choose SVM model. This model is expected to be very good classifier for <strong>existing set of users</strong> even in future. On the other hand, the trivial classifier is very probably to achieve the best results on the unlabelled test set, but it does not generalize to any new measurements.</p>
-<p>We use the previously kept-out labelled test set to estimate the expected out-of-sample accuracy of the selected SVM model and we get the estimate <strong>0.993033</strong>.</p>
+<p>Due to very good performance, we choose SVM model. This model is expected to be very good classifier for <strong>existing set of users</strong> even in future. On the other hand, for the trivial classifier it is very probable that it will achieve the best results on the unlabelled test set, but it does not generalize to any new measurements.</p>
+<p>We use the previously kept-out labelled test set to estimate the expected out-of-sample accuracy of the selected SVM model and we get the estimate of <strong>0.992184</strong>.</p>
 </div>
 <div id="conclusion" class="section level3">
 <h3>Conclusion</h3>
-<p>We intended to make a good classifier for exercise execution quality. After trying out several models, we chose SVM model based on crossvalidation estimated accuracy. We used obtained estimate of out-of-sample accuracy of <strong>0.993033</strong> using the labelled test set which signifies that the selected model will be very good classifier in the future for the users from the dataset, or the people of similar anthropometric characteristics. The accuracy will undoubtably be smaller for people that are not like the measured users.</p>
+<p>We intended to make a good classifier for exercise execution quality. After trying out several models, we chose SVM model based on crossvalidation estimated accuracy. We used obtained estimate of out-of-sample accuracy of <strong>0.992184</strong> using the labelled test set which signifies that the selected model will be very good classifier in the future for the users from the dataset, or the people of similar anthropometric characteristics. The accuracy will undoubtedly be smaller for people that are not like the measured users.</p>
 </div>
 <div id="references" class="section level2">
 <h2>References</h2>

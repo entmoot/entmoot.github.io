@@ -5,7 +5,7 @@ date: August 2014
 ---
 
 ### Summary
-In this report we find good classification models for exercise execution quality from motion tracking data. The data for this study is obtained from [here](http://groupware.les.inf.puc-rio.br/har), used in [1]. From the data exploration we found that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics. Using insight that test-set presents data about identical individuals as in the training set, we tried out kNN algorithm that should use specific user's anthropometric characteristics. SVM model, well known good performing robust classifier, has even more impressive performance on this dataset and it seems to also extract user specifics. Finally, streching the data even more, to the extremes, after seeing specifics of the relation between the test and training set, we constructed a trivial classifier that should have the best performance on the given test set with this training data.  
+In this report we find good classification models for exercise execution quality from motion tracking data. The data for this study is obtained from [here](http://groupware.les.inf.puc-rio.br/har), used in [1]. From the data exploration we found that there are substantial differences between the users regarding values of some variables, due to differences in anthropometrics. Using insight that test-set presents data about identical individuals as in the training set, we tried out kNN algorithm that should use specific users' anthropometric characteristics. SVM model, well known good performing robust classifier, has even more impressive performance on this dataset and it seems to also extract user specifics so it should work well on new data from those users. Finally, streching the data even more, to the extremes, after seeing specifics of the relation between the test and training set, we constructed a trivial classifier that should have the best performance on the given test set with this training data.  
 
 ### Data processing and exploration
 ```{r loading data}
@@ -17,7 +17,7 @@ mov2=read.csv("pml-testing.csv")
 
 names(mov1)
 ```
-The supplied labeled dataset has `r nrow(mov1)` observations and `r ncol(mov1)` variables. But, most of the observations miss summary statistics data. As all the observation in the test set also do not have this information we remove those columns from the dataset. We also remove the columns holding the observationID, time related markers/variables, and *num_window* as these hold the time information which should not be relevant if we would like to do exercises in the future and classify our execution quality.
+The supplied labeled dataset has `r nrow(mov1)` observations and `r ncol(mov1)` variables. But, the most of the observations miss summary statistics data. As all the observations in the test set also do not have this information we remove those columns from the dataset. We also remove the columns holding the observationID, time related markers/variables, and *num_window* as these hold the time information which should not be relevant if we would like to do exercises in the future and classify our execution quality.
 
 ```{r filtering variables}
 cols=grep("max|min|amplitude|kurtosis|avg|var|stddev|skewness",names(mov1))
@@ -76,23 +76,19 @@ axis(side=2, at=1:5, labels=levels(mov1$classe))
 ```
 
 ### kNN model
-Looking into unlabeled test set we can see that all the records describe the identical set of individuals as the training set so we can learn using the user anthropometric specifics. kNN seems as good candidate for using these specifics. Prior to that, we normalize the data, removing irrelevant *user_name*. Also, as we will use the cross-validation, we shuffle the rows in training set to break possible bias in folds (Fig 2.).
-```{r normalization and shuffling}
+Looking into unlabeled test set we can see that all the records describe the identical set of individuals as the training set so we can learn using the user anthropometric specifics. kNN seems as good candidate for using these specifics. As we will use the cross-validation, we shuffle the rows in training set to break possible bias in folds (Fig 2.).
+```{r shuffling}
 N=length(names(mov1.filtered))
-predObj=preProcess(trainMov[,-c(1,N)],method=c("center","scale"));
-
-trainMov.stand=predict(predObj,trainMov[,-c(1,N)])
-testMov.stand=predict(predObj,testMov[,-c(1,N)])
 
 set.seed(222)
-shuffle1=sample(nrow(trainMov.stand))
+shuffle1=sample(nrow(trainMov))
 ```
 We use the cross-validation to select the value of parameter k from the set of {1,3,5,7,9}.
 ```{r kNN model}
 ctrl <- trainControl(method = "cv", number=5)
 cl <- makeCluster(detectCores())
 registerDoParallel(cl)
-mod.knn=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method="knn",trControl=ctrl,tuneGrid = expand.grid(.k=c(1,3,5,7,9)))
+mod.knn=train(trainMov$classe[shuffle1]~.,data=trainMov[shuffle1,],method="knn",preProcess=c("center","scale"),trControl=ctrl,tuneGrid = expand.grid(.k=c(1,3,5,7,9)))
 stopCluster(cl)
 mod.knn
 ```
@@ -104,11 +100,29 @@ SVM is known for it's great out-of-box performance in classification, so we crea
 ctrl <- trainControl(method = "cv", number=5)
 cl <- makeCluster(detectCores())
 registerDoParallel(cl)
-mod.svm=train(trainMov$classe[shuffle1]~.,data=trainMov.stand[shuffle1,],method="svmRadial",trControl=ctrl,tuneGrid = expand.grid(.sigma=c(0.01,0.02),.C=c(1,100,200)))
+mod.svm=train(trainMov$classe[shuffle1]~.,data=trainMov[shuffle1,],method="svmRadial",preProcess=c("center","scale"),trControl=ctrl,tuneGrid = expand.grid(.sigma=c(0.01,0.02),.C=c(1,100,200)))
 stopCluster(cl)
 mod.svm
 ```
 The selected model has **C=`r mod.svm$bestTune$C`**, **sigma=`r mod.svm$bestTune$sigma`** and *estimated accuracy=`r round(mod.svm$results[mod.svm$results$sigma==mod.svm$bestTune$sigma & mod.svm$results$C==mod.svm$bestTune$C,]$Accuracy,digits=6)`*.
+
+In order to find if SVM model bases its performance on user specifics, we used 5-fold crossvalidation, where in each fold all the data for one user are in the test set, while all other are inside the training set. 
+```{r check svm}
+              
+ctrl=trainControl(method="none")
+sum=0
+for(i in levels(trainMov$user_name)){
+
+  temp=trainMov[trainMov$user_name!=i,]
+  temp_test=trainMov[trainMov$user_name==i,]
+  
+  mod.svm_t=train(temp$classe~.,data=temp[,-c(1,N)],method="svmRadial",preProcess=c("center","scale"),trControl=ctrl,tuneGrid = expand.grid(.sigma=mod.svm$bestTune$sigma,.C=mod.svm$bestTune$C))
+  
+  sum=sum+accuracy(predict(mod.svm_t, newdata=temp_test[,-c(1,N)]),temp_test$classe)
+  }
+sprintf('Estimated accuracy: %f',sum/5)
+```
+The estimated accuracy is much lower in this case which means that our SVM model bases its good performance on user specifics, just like kNN model.
 
 ### Trivial model
 Let's look at the **num_window vs classe** plot:
@@ -173,9 +187,9 @@ So, we expect that the accuracy on unlabeled test set to be 1. Of course, this m
 We also tried out random forest and multinomial logistic regression. The former takes quite longer to compute and does not improve on other models while at the same time also building its precision on user specifics, so we do not gain anything. The latter model is substantially weaker classifier than others.
 
 ### Final choice
-Due to very good performance, we choose SVM model. This model is expected to be very good classifier for **existing set of users** even in future. On the other hand, the trivial classifier is very probably to achieve the best results on the unlabelled test set, but it does not generalize to any new measurements.
+Due to very good performance, we choose SVM model. This model is expected to be very good classifier for **existing set of users** even in future. On the other hand, for the trivial classifier it is very probable that it will achieve the best results on the unlabelled test set, but it does not generalize to any new measurements.
 
-We use the previously kept-out labelled test set to estimate the expected out-of-sample accuracy of the selected SVM model and we get the estimate **`r round(accuracy(predict(mod.svm,newdata=testMov.stand),testMov$classe),digits=6)`**.
+We use the previously kept-out labelled test set to estimate the expected out-of-sample accuracy of the selected SVM model and we get the estimate of **`r round(accuracy(predict(mod.svm,newdata=testMov),testMov$classe),digits=6)`**.
 
 ```{r selected model,echo=FALSE}
 mov2.filtered=mov2[,-c(cols,1,3,4,5,6,7)]
@@ -187,7 +201,7 @@ mov2.fstand=predict(predObj,newdata=mov2.filtered[,-c(1,N)])
 
 cl <- makeCluster(detectCores())
 registerDoParallel(cl)
-mod.svm2=train(mov1.filtered$classe~.,data=mov1.fstand,method="svmRadial",tuneGrid = expand.grid(.sigma=0.02,.C=200))
+mod.svm2=train(mov1.filtered$classe~.,data=mov1.fstand,method="svmRadial",tuneGrid = expand.grid(.sigma=mod.svm$bestTune$sigma,.C=mod.svm$bestTune$C))
 stopCluster(cl)
 ```
 ```{r saving tests,echo=FALSE}
@@ -195,7 +209,7 @@ preds=predict(mod.svm2,newdata=mov2.fstand)
 pml_write_files(preds)
 ```
 ### Conclusion
-We intended to make a good classifier for exercise execution quality. After trying out several models, we chose SVM model based on crossvalidation estimated accuracy. We used obtained estimate of out-of-sample accuracy of **`r round(accuracy(predict(mod.svm,newdata=testMov.stand),testMov$classe),digits=6)`** using the labelled test set which signifies that the selected model will be very good classifier in the future for the users from the dataset, or the people of similar anthropometric characteristics. The accuracy will undoubtably be smaller for people that are not like the measured users.
+We intended to make a good classifier for exercise execution quality. After trying out several models, we chose SVM model based on crossvalidation estimated accuracy. We used obtained estimate of out-of-sample accuracy of **`r round(accuracy(predict(mod.svm,newdata=testMov),testMov$classe),digits=6)`** using the labelled test set which signifies that the selected model will be very good classifier in the future for the users from the dataset, or the people of similar anthropometric characteristics. The accuracy will undoubtedly be smaller for people that are not like the measured users.
 
 ## References
 1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
